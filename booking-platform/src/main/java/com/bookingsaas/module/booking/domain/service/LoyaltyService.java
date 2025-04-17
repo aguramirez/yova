@@ -99,7 +99,6 @@ public class LoyaltyService {
         Customer referrer = customerRepository.findById(referral.getReferrerCustomerId())
                 .orElseThrow(() -> new RuntimeException("Cliente referente no encontrado"));
         
-        // Obtener cliente referido
         Customer referred = customerRepository.findById(referral.getReferredCustomerId())
                 .orElseThrow(() -> new RuntimeException("Cliente referido no encontrado"));
         

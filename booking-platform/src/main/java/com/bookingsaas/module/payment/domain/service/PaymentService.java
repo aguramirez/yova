@@ -37,14 +37,15 @@ public class PaymentService {
     private final InvoiceRepository invoiceRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final BookingRepository bookingRepository;
-    
+
     // Contador atómico para generar números de factura
     private static final AtomicLong invoiceCounter = new AtomicLong(1000);
 
     /**
      * Crear un nuevo pago para una reserva
-     * @param booking Reserva
-     * @param amount Monto a pagar
+     * 
+     * @param booking       Reserva
+     * @param amount        Monto a pagar
      * @param paymentMethod Método de pago
      * @return Pago creado
      */
@@ -54,15 +55,15 @@ public class PaymentService {
         if (booking == null) {
             throw new IllegalArgumentException("La reserva es requerida");
         }
-        
+
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("El monto debe ser mayor que cero");
         }
-        
+
         if (paymentMethod == null || paymentMethod.isBlank()) {
             throw new IllegalArgumentException("El método de pago es requerido");
         }
-        
+
         // Crear objeto de pago
         Payment payment = Payment.builder()
                 .bookingId(booking.getId())
@@ -73,17 +74,18 @@ public class PaymentService {
                 .status(Payment.PaymentStatus.PENDING)
                 .paymentMethod(paymentMethod)
                 .build();
-        
+
         // Guardar pago
         Payment savedPayment = paymentRepository.save(payment);
         log.info("Pago creado: {} para reserva {}", savedPayment.getId(), booking.getId());
-        
+
         return savedPayment;
     }
 
     /**
      * Procesar un pago pendiente
-     * @param paymentId ID del pago
+     * 
+     * @param paymentId     ID del pago
      * @param transactionId ID de transacción del gateway de pago
      * @return Pago procesado
      */
@@ -91,50 +93,51 @@ public class PaymentService {
     public Payment processPayment(UUID paymentId, String transactionId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new RuntimeException("Pago no encontrado: " + paymentId));
-        
+
         // Validar que el pago esté pendiente
         if (payment.getStatus() != Payment.PaymentStatus.PENDING) {
             throw new IllegalStateException("El pago no está pendiente");
         }
-        
+
         // Simular procesamiento de pago exitoso
         boolean paymentSuccessful = true; // En producción, esto vendría del gateway
-        
+
         if (paymentSuccessful) {
             // Marcar pago como completado
             payment.complete(transactionId);
-            
+
             // Generar factura si es necesario
             generateInvoice(payment);
-            
+
             // Actualizar reserva relacionada
             Booking booking = bookingRepository.findById(payment.getBookingId())
                     .orElse(null);
-            
+
             if (booking != null && booking.getStatus() == Booking.BookingStatus.PENDING) {
                 booking.confirmBooking();
                 bookingRepository.save(booking);
             }
-            
+
             log.info("Pago procesado exitosamente: {} con transacción {}", paymentId, transactionId);
         } else {
             // Marcar pago como fallido
             payment.fail("Error de procesamiento");
             log.warn("Pago fallido: {}", paymentId);
         }
-        
+
         return paymentRepository.save(payment);
     }
 
     /**
      * Generar factura para un pago
+     * 
      * @param payment Pago completado
      * @return Factura generada
      */
     private Invoice generateInvoice(Payment payment) {
         // Generar número de factura único
         String invoiceNumber = generateInvoiceNumber(payment.getBusinessId());
-        
+
         // Crear factura
         Invoice invoice = Invoice.builder()
                 .paymentId(payment.getId())
@@ -147,15 +150,16 @@ public class PaymentService {
                 .totalAmount(payment.getAmount())
                 .taxAmount(calculateTax(payment.getAmount())) // Cálculo simplificado
                 .build();
-        
+
         Invoice savedInvoice = invoiceRepository.save(invoice);
         log.info("Factura generada: {} para pago {}", savedInvoice.getId(), payment.getId());
-        
+
         return savedInvoice;
     }
 
     /**
      * Generar número de factura único
+     * 
      * @param businessId ID del negocio
      * @return Número de factura
      */
@@ -164,23 +168,26 @@ public class PaymentService {
         long counter = invoiceCounter.incrementAndGet();
         String businessSuffix = businessId.toString().substring(businessId.toString().length() - 4);
         int year = LocalDate.now().getYear();
-        
+
         return String.format("INV-%s-%d-%04d", businessSuffix, year, counter);
     }
 
     /**
      * Calcular impuestos para una factura
+     * 
      * @param amount Monto base
      * @return Monto de impuestos
      */
     private BigDecimal calculateTax(BigDecimal amount) {
         // Implementación simplificada: 10% de impuestos
-        // En producción, esto dependería de la configuración del negocio y las leyes fiscales
+        // En producción, esto dependería de la configuración del negocio y las leyes
+        // fiscales
         return amount.multiply(new BigDecimal("0.10")).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     /**
      * Cancelar un pago pendiente
+     * 
      * @param paymentId ID del pago
      * @return Pago cancelado
      */
@@ -188,65 +195,67 @@ public class PaymentService {
     public Payment cancelPayment(UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new RuntimeException("Pago no encontrado: " + paymentId));
-        
+
         if (!payment.cancel()) {
             throw new IllegalStateException("El pago no puede ser cancelado en su estado actual");
         }
-        
+
         Payment updatedPayment = paymentRepository.save(payment);
         log.info("Pago cancelado: {}", paymentId);
-        
+
         return updatedPayment;
     }
 
     /**
      * Procesar reembolso de un pago
+     * 
      * @param paymentId ID del pago
-     * @param amount Monto a reembolsar (null para reembolso total)
+     * @param amount    Monto a reembolsar (null para reembolso total)
      * @return Pago reembolsado
      */
     @Transactional
     public Payment processRefund(UUID paymentId, BigDecimal amount) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new RuntimeException("Pago no encontrado: " + paymentId));
-        
+
         // Validar que el pago esté completado
         if (!payment.isCompleted()) {
             throw new IllegalStateException("Solo se pueden reembolsar pagos completados");
         }
-        
+
         // Si no se especifica monto, reembolsar todo
         BigDecimal refundAmount = amount != null ? amount : payment.getAmount();
-        
+
         // Validar que el monto a reembolsar no sea mayor que el pago original
         if (refundAmount.compareTo(payment.getAmount()) > 0) {
             throw new IllegalArgumentException("El monto a reembolsar no puede ser mayor que el pago original");
         }
-        
+
         // Simular procesamiento de reembolso exitoso
         boolean refundSuccessful = true; // En producción, esto vendría del gateway
-        
+
         if (refundSuccessful) {
             // Marcar pago como reembolsado
             payment.refund();
-            
+
             // Actualizar factura si existe
             List<Invoice> invoices = invoiceRepository.findByPaymentId(paymentId);
             invoices.forEach(invoice -> {
                 invoice.cancel();
                 invoiceRepository.save(invoice);
             });
-            
+
             log.info("Reembolso procesado para pago: {}, monto: {}", paymentId, refundAmount);
         } else {
             throw new RuntimeException("Error al procesar el reembolso");
         }
-        
+
         return paymentRepository.save(payment);
     }
 
     /**
      * Obtener un pago por su ID
+     * 
      * @param paymentId ID del pago
      * @return Pago encontrado
      * @throws RuntimeException si no se encuentra
@@ -259,6 +268,7 @@ public class PaymentService {
 
     /**
      * Buscar pagos por reserva
+     * 
      * @param bookingId ID de la reserva
      * @return Lista de pagos
      */
@@ -269,8 +279,9 @@ public class PaymentService {
 
     /**
      * Buscar pagos por cliente
+     * 
      * @param customerId ID del cliente
-     * @param pageable Paginación
+     * @param pageable   Paginación
      * @return Página de pagos
      */
     @Transactional(readOnly = true)
@@ -280,8 +291,9 @@ public class PaymentService {
 
     /**
      * Buscar pagos por negocio
+     * 
      * @param businessId ID del negocio
-     * @param pageable Paginación
+     * @param pageable   Paginación
      * @return Página de pagos
      */
     @Transactional(readOnly = true)
@@ -291,23 +303,25 @@ public class PaymentService {
 
     /**
      * Buscar pagos por negocio y rango de fechas
+     * 
      * @param businessId ID del negocio
-     * @param startDate Fecha inicial
-     * @param endDate Fecha final
-     * @param pageable Paginación
+     * @param startDate  Fecha inicial
+     * @param endDate    Fecha final
+     * @param pageable   Paginación
      * @return Página de pagos
      */
     @Transactional(readOnly = true)
-    public Page<Payment> getPaymentsByDateRange(UUID businessId, LocalDateTime startDate, 
-                                               LocalDateTime endDate, Pageable pageable) {
+    public Page<Payment> getPaymentsByDateRange(UUID businessId, LocalDateTime startDate,
+            LocalDateTime endDate, Pageable pageable) {
         return paymentRepository.findByDateRange(businessId, startDate, endDate, pageable);
     }
 
     /**
      * Calcular total de ingresos en un período
+     * 
      * @param businessId ID del negocio
-     * @param startDate Fecha inicial
-     * @param endDate Fecha final
+     * @param startDate  Fecha inicial
+     * @param endDate    Fecha final
      * @return Total de ingresos
      */
     @Transactional(readOnly = true)
@@ -317,57 +331,63 @@ public class PaymentService {
 
     /**
      * Guardar un método de pago para un cliente
+     * 
      * @param paymentMethod Método de pago
      * @return Método de pago guardado
      */
+    // Corregir el método savePaymentMethod
     @Transactional
     public PaymentMethod savePaymentMethod(PaymentMethod paymentMethod) {
         // Validar datos básicos
         if (paymentMethod.getCustomerId() == null) {
             throw new IllegalArgumentException("ID de cliente es requerido");
         }
-        
+
         if (paymentMethod.getBusinessId() == null) {
             throw new IllegalArgumentException("ID de negocio es requerido");
         }
-        
+
         if (paymentMethod.getType() == null || paymentMethod.getType().isBlank()) {
             throw new IllegalArgumentException("Tipo de método de pago es requerido");
         }
-        
+
         // Si se marca como predeterminado, desmarcar otros
         if (paymentMethod.isDefault()) {
-            paymentMethodRepository.findByCustomerIdAndBusinessIdAndIsDefaultTrue(
-                    paymentMethod.getCustomerId(), paymentMethod.getBusinessId())
-                .forEach(pm -> {
-                    pm.setDefault(false);
-                    paymentMethodRepository.save(pm);
-                });
+            Optional<PaymentMethod> existingDefault = paymentMethodRepository
+                    .findByCustomerIdAndBusinessIdAndIsDefaultTrue(
+                            paymentMethod.getCustomerId(), paymentMethod.getBusinessId());
+
+            existingDefault.ifPresent(pm -> {
+                pm.setDefault(false);
+                paymentMethodRepository.save(pm);
+            });
         }
-        
+
         // Guardar método de pago
         PaymentMethod savedMethod = paymentMethodRepository.save(paymentMethod);
-        log.info("Método de pago guardado: {} para cliente {}", 
+        log.info("Método de pago guardado: {} para cliente {}",
                 savedMethod.getId(), paymentMethod.getCustomerId());
-        
+
         return savedMethod;
     }
 
     /**
      * Eliminar un método de pago
+     * 
      * @param paymentMethodId ID del método de pago
      */
     @Transactional
     public void deletePaymentMethod(UUID paymentMethodId) {
         PaymentMethod paymentMethod = paymentMethodRepository.findById(paymentMethodId)
                 .orElseThrow(() -> new RuntimeException("Método de pago no encontrado: " + paymentMethodId));
-        
+
         paymentMethodRepository.delete(paymentMethod);
         log.info("Método de pago eliminado: {}", paymentMethodId);
     }
 
     /**
      * Obtener métodos de pago de un cliente
+     * 
      * @param customerId ID del cliente
      * @param businessId ID del negocio
      * @return Lista de métodos de pago
@@ -379,6 +399,7 @@ public class PaymentService {
 
     /**
      * Obtener método de pago predeterminado de un cliente
+     * 
      * @param customerId ID del cliente
      * @param businessId ID del negocio
      * @return Método de pago predeterminado o vacío

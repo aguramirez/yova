@@ -56,175 +56,7 @@ public class BookingService {
         booking.generateAttendanceCode();
         
         // Establecer estado inicial
-        if (booking.getStatus() == Booking.BookingStatus.COMPLETED || 
-            booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
-            throw new IllegalStateException("No se pueden cancelar reservas completadas o marcadas como no-show");
-        }
-        
-        booking.cancelBooking();
-        
-        log.info("Reserva cancelada: {}", bookingId);
-        return bookingRepository.save(booking);
-    }
-
-    /**
-     * Validar asistencia a una reserva
-     * @param attendanceCode Código de asistencia
-     * @param validatedBy ID del usuario que valida
-     * @return Reserva validada
-     */
-    @Transactional
-    public Booking validateAttendance(String attendanceCode, UUID validatedBy) {
-        // Validar formato del código
-        if (!CODE_PATTERN.matcher(attendanceCode).matches()) {
-            throw new IllegalArgumentException("Formato de código de asistencia inválido");
-        }
-        
-        // Buscar reserva por código
-        Booking booking = bookingRepository.findByAttendanceCode(attendanceCode)
-                .orElseThrow(() -> new RuntimeException("Código de asistencia no encontrado: " + attendanceCode));
-        
-        // Verificar que no esté ya validada
-        if (booking.isAttendanceValidated()) {
-            throw new IllegalStateException("La asistencia ya fue validada para esta reserva");
-        }
-        
-        // Verificar que no esté cancelada
-        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
-            throw new IllegalStateException("No se puede validar asistencia para una reserva cancelada");
-        }
-        
-        // Marcar como completada
-        booking.completeBooking(validatedBy);
-        
-        // Actualizar estadísticas del cliente
-        Customer customer = booking.getCustomer();
-        customer.recordAttendance();
-        customerRepository.save(customer);
-        
-        // Actualizar estadísticas del profesional si aplica
-        Professional professional = booking.getProfessional();
-        if (professional != null) {
-            professional.updateAttendanceRate(true);
-            professionalRepository.save(professional);
-        }
-        
-        // Otorgar puntos de fidelidad si el módulo está activo
-        if (businessService.isModuleActive(booking.getBusinessId(), "loyalty")) {
-            loyaltyService.awardPointsForBooking(booking);
-        }
-        
-        Booking updatedBooking = bookingRepository.save(booking);
-        log.info("Asistencia validada para reserva: {}", booking.getId());
-        
-        return updatedBooking;
-    }
-
-    /**
-     * Marcar una reserva como no-show (cliente no se presentó)
-     * @param bookingId ID de la reserva
-     * @param validatedBy ID del usuario que marca la no-asistencia
-     * @return Reserva actualizada
-     */
-    @Transactional
-    public Booking markAsNoShow(UUID bookingId, UUID validatedBy) {
-        Booking booking = getBookingById(bookingId);
-        
-        // Verificar que no esté ya validada o marcada
-        if (booking.isAttendanceValidated() || booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
-            throw new IllegalStateException("La reserva ya fue procesada");
-        }
-        
-        // Verificar que no esté cancelada
-        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
-            throw new IllegalStateException("No se puede marcar no-show para una reserva cancelada");
-        }
-        
-        // Marcar como no-show
-        booking.markAsNoShow(validatedBy);
-        
-        // Actualizar estadísticas del profesional si aplica
-        Professional professional = booking.getProfessional();
-        if (professional != null) {
-            professional.updateAttendanceRate(false);
-            professionalRepository.save(professional);
-        }
-        
-        Booking updatedBooking = bookingRepository.save(booking);
-        log.info("Reserva marcada como no-show: {}", bookingId);
-        
-        return updatedBooking;
-    }
-
-    /**
-     * Reprogramar una reserva
-     * @param bookingId ID de la reserva
-     * @param newStartTime Nueva hora de inicio
-     * @param newProfessionalId ID del nuevo profesional (opcional)
-     * @return Reserva reprogramada
-     */
-    @Transactional
-    public Booking rescheduleBooking(UUID bookingId, LocalDateTime newStartTime, UUID newProfessionalId) {
-        Booking booking = getBookingById(bookingId);
-        
-        // Verificar que no esté completada, cancelada o marcada como no-show
-        if (booking.getStatus() == Booking.BookingStatus.COMPLETED || 
-            booking.getStatus() == Booking.BookingStatus.CANCELED || 
-            booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
-            throw new IllegalStateException("No se puede reprogramar una reserva finalizada");
-        }
-        
-        // Actualizar hora de inicio
-        booking.setStartTime(newStartTime);
-        
-        // Calcular nueva hora de fin basada en la duración del servicio
-        Service service = booking.getService();
-        booking.setEndTime(service.calculateEndTime(newStartTime));
-        
-        // Actualizar profesional si se especificó
-        if (newProfessionalId != null) {
-            Professional newProfessional = professionalRepository.findById(newProfessionalId)
-                    .orElseThrow(() -> new RuntimeException("Profesional no encontrado: " + newProfessionalId));
-            booking.setProfessional(newProfessional);
-        }
-        
-        // Verificar disponibilidad
-        checkAvailability(booking);
-        
-        // Si estaba cancelada, volver a estado pendiente
-        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
-            booking.setStatus(Booking.BookingStatus.PENDING);
-        }
-        
-        Booking updatedBooking = bookingRepository.save(booking);
-        log.info("Reserva reprogramada: {}", bookingId);
-        
-        return updatedBooking;
-    }
-
-    /**
-     * Buscar una reserva por su código de asistencia
-     * @param attendanceCode Código de asistencia
-     * @return Reserva encontrada o vacío
-     */
-    @Transactional(readOnly = true)
-    public Optional<Booking> findByAttendanceCode(String attendanceCode) {
-        return bookingRepository.findByAttendanceCode(attendanceCode);
-    }
-
-    /**
-     * Obtener reservas que necesitan recordatorio
-     * @param hoursBeforeAppointment Horas de anticipación
-     * @return Lista de reservas para enviar recordatorio
-     */
-    @Transactional(readOnly = true)
-    public List<Booking> getBookingsForReminder(int hoursBeforeAppointment) {
-        LocalDateTime fromTime = LocalDateTime.now().plusHours(hoursBeforeAppointment).minusMinutes(10);
-        LocalDateTime toTime = LocalDateTime.now().plusHours(hoursBeforeAppointment).plusMinutes(10);
-        
-        return bookingRepository.findNeedingReminder(fromTime, toTime);
-    }
-}.getStatus() == null) {
+        if (booking.getStatus() == null) {
             booking.setStatus(Booking.BookingStatus.PENDING);
         }
         
@@ -396,4 +228,173 @@ public class BookingService {
     public Booking cancelBooking(UUID bookingId) {
         Booking booking = getBookingById(bookingId);
         
-        if (booking
+        // Verificar que la reserva no esté ya completada o marcada como no-show
+        if (booking.getStatus() == Booking.BookingStatus.COMPLETED || 
+            booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
+            throw new IllegalStateException("No se pueden cancelar reservas completadas o marcadas como no-show");
+        }
+        
+        booking.cancelBooking();
+        
+        log.info("Reserva cancelada: {}", bookingId);
+        return bookingRepository.save(booking);
+    }
+
+    /**
+     * Validar asistencia a una reserva
+     * @param attendanceCode Código de asistencia
+     * @param validatedBy ID del usuario que valida
+     * @return Reserva validada
+     */
+    @Transactional
+    public Booking validateAttendance(String attendanceCode, UUID validatedBy) {
+        // Validar formato del código
+        if (!CODE_PATTERN.matcher(attendanceCode).matches()) {
+            throw new IllegalArgumentException("Formato de código de asistencia inválido");
+        }
+        
+        // Buscar reserva por código
+        Booking booking = bookingRepository.findByAttendanceCode(attendanceCode)
+                .orElseThrow(() -> new RuntimeException("Código de asistencia no encontrado: " + attendanceCode));
+        
+        // Verificar que no esté ya validada
+        if (booking.isAttendanceValidated()) {
+            throw new IllegalStateException("La asistencia ya fue validada para esta reserva");
+        }
+        
+        // Verificar que no esté cancelada
+        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
+            throw new IllegalStateException("No se puede validar asistencia para una reserva cancelada");
+        }
+        
+        // Marcar como completada
+        booking.completeBooking(validatedBy);
+        
+        // Actualizar estadísticas del cliente
+        Customer customer = booking.getCustomer();
+        customer.recordAttendance();
+        customerRepository.save(customer);
+        
+        // Actualizar estadísticas del profesional si aplica
+        Professional professional = booking.getProfessional();
+        if (professional != null) {
+            professional.updateAttendanceRate(true);
+            professionalRepository.save(professional);
+        }
+        
+        // Otorgar puntos de fidelidad si el módulo está activo
+        if (businessService.isModuleActive(booking.getBusinessId(), "loyalty")) {
+            loyaltyService.awardPointsForBooking(booking);
+        }
+        
+        Booking updatedBooking = bookingRepository.save(booking);
+        log.info("Asistencia validada para reserva: {}", booking.getId());
+        
+        return updatedBooking;
+    }
+
+    /**
+     * Marcar una reserva como no-show (cliente no se presentó)
+     * @param bookingId ID de la reserva
+     * @param validatedBy ID del usuario que marca la no-asistencia
+     * @return Reserva actualizada
+     */
+    @Transactional
+    public Booking markAsNoShow(UUID bookingId, UUID validatedBy) {
+        Booking booking = getBookingById(bookingId);
+        
+        // Verificar que no esté ya validada o marcada
+        if (booking.isAttendanceValidated() || booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
+            throw new IllegalStateException("La reserva ya fue procesada");
+        }
+        
+        // Verificar que no esté cancelada
+        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
+            throw new IllegalStateException("No se puede marcar no-show para una reserva cancelada");
+        }
+        
+        // Marcar como no-show
+        booking.markAsNoShow(validatedBy);
+        
+        // Actualizar estadísticas del profesional si aplica
+        Professional professional = booking.getProfessional();
+        if (professional != null) {
+            professional.updateAttendanceRate(false);
+            professionalRepository.save(professional);
+        }
+        
+        Booking updatedBooking = bookingRepository.save(booking);
+        log.info("Reserva marcada como no-show: {}", bookingId);
+        
+        return updatedBooking;
+    }
+
+    /**
+     * Reprogramar una reserva
+     * @param bookingId ID de la reserva
+     * @param newStartTime Nueva hora de inicio
+     * @param newProfessionalId ID del nuevo profesional (opcional)
+     * @return Reserva reprogramada
+     */
+    @Transactional
+    public Booking rescheduleBooking(UUID bookingId, LocalDateTime newStartTime, UUID newProfessionalId) {
+        Booking booking = getBookingById(bookingId);
+        
+        // Verificar que no esté completada, cancelada o marcada como no-show
+        if (booking.getStatus() == Booking.BookingStatus.COMPLETED || 
+            booking.getStatus() == Booking.BookingStatus.CANCELED || 
+            booking.getStatus() == Booking.BookingStatus.NO_SHOW) {
+            throw new IllegalStateException("No se puede reprogramar una reserva finalizada");
+        }
+        
+        // Actualizar hora de inicio
+        booking.setStartTime(newStartTime);
+        
+        // Calcular nueva hora de fin basada en la duración del servicio
+        Service service = booking.getService();
+        booking.setEndTime(service.calculateEndTime(newStartTime));
+        
+        // Actualizar profesional si se especificó
+        if (newProfessionalId != null) {
+            Professional newProfessional = professionalRepository.findById(newProfessionalId)
+                    .orElseThrow(() -> new RuntimeException("Profesional no encontrado: " + newProfessionalId));
+            booking.setProfessional(newProfessional);
+        }
+        
+        // Verificar disponibilidad
+        checkAvailability(booking);
+        
+        // Si estaba cancelada, volver a estado pendiente
+        if (booking.getStatus() == Booking.BookingStatus.CANCELED) {
+            booking.setStatus(Booking.BookingStatus.PENDING);
+        }
+        
+        Booking updatedBooking = bookingRepository.save(booking);
+        log.info("Reserva reprogramada: {}", bookingId);
+        
+        return updatedBooking;
+    }
+
+    /**
+     * Buscar una reserva por su código de asistencia
+     * @param attendanceCode Código de asistencia
+     * @return Reserva encontrada o vacío
+     */
+    @Transactional(readOnly = true)
+    public Optional<Booking> findByAttendanceCode(String attendanceCode) {
+        return bookingRepository.findByAttendanceCode(attendanceCode);
+    }
+
+    /**
+     * Obtener reservas que necesitan recordatorio
+     * @param hoursBeforeAppointment Horas de anticipación
+     * @return Lista de reservas para enviar recordatorio
+     */
+    @Transactional(readOnly = true)
+    public List<Booking> getBookingsForReminder(int hoursBeforeAppointment) {
+        LocalDateTime fromTime = LocalDateTime.now().plusHours(hoursBeforeAppointment).minusMinutes(10);
+        LocalDateTime toTime = LocalDateTime.now().plusHours(hoursBeforeAppointment).plusMinutes(10);
+        
+        return bookingRepository.findNeedingReminder(fromTime, toTime);
+    }
+}

@@ -18,7 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class TenantSchemaConnectionProvider implements MultiTenantConnectionProvider {
+public class TenantSchemaConnectionProvider implements MultiTenantConnectionProvider<String> {
 
     private static final long serialVersionUID = 1L;
 
@@ -66,6 +66,11 @@ public class TenantSchemaConnectionProvider implements MultiTenantConnectionProv
         releaseAnyConnection(connection);
     }
 
+    @Override
+    public boolean isUnwrappableAs(Class<?> unwrapType) {
+        return MultiTenantConnectionProvider.class.isAssignableFrom(unwrapType) 
+            || ConnectionProvider.class.isAssignableFrom(unwrapType);
+    }
     /**
      * Indica si este proveedor de conexiones puede ser liberado.
      */

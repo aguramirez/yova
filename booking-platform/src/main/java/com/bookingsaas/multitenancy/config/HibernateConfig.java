@@ -4,7 +4,7 @@ import com.bookingsaas.multitenancy.infrastructure.TenantContext;
 import com.bookingsaas.multitenancy.infrastructure.TenantSchemaConnectionProvider;
 import jakarta.persistence.EntityManagerFactory;
 import lombok.RequiredArgsConstructor;
-import org.hibernate.cfg.Environment;
+import org.hibernate.cfg.AvailableSettings;  // Importa esta clase en lugar de Environment
 import org.hibernate.context.spi.CurrentTenantIdentifierResolver;
 import org.hibernate.engine.jdbc.connections.spi.MultiTenantConnectionProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,9 +20,6 @@ import javax.sql.DataSource;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Configuración de Hibernate para soportar multi-tenancy a nivel de esquema.
- */
 @Configuration
 @RequiredArgsConstructor
 public class HibernateConfig {
@@ -33,12 +30,9 @@ public class HibernateConfig {
     @Value("${app.multitenancy.defaultSchema}")
     private String defaultSchema;
 
-    /**
-     * Resolver para obtener el identificador del tenant actual
-     */
     @Bean
-    public CurrentTenantIdentifierResolver currentTenantIdentifierResolver() {
-        return new CurrentTenantIdentifierResolver() {
+    public CurrentTenantIdentifierResolver<String> currentTenantIdentifierResolver() {
+        return new CurrentTenantIdentifierResolver<String>() {
             @Override
             public String resolveCurrentTenantIdentifier() {
                 String tenantId = TenantContext.getTenantId();
@@ -52,13 +46,10 @@ public class HibernateConfig {
         };
     }
 
-    /**
-     * Configuración del Entity Manager Factory con soporte multi-tenant
-     */
     @Bean
     public LocalContainerEntityManagerFactoryBean entityManagerFactory(
-            MultiTenantConnectionProvider connectionProvider,
-            CurrentTenantIdentifierResolver tenantResolver) {
+            MultiTenantConnectionProvider<String> connectionProvider,
+            CurrentTenantIdentifierResolver<String> tenantResolver) {
         
         LocalContainerEntityManagerFactoryBean emf = new LocalContainerEntityManagerFactoryBean();
         emf.setDataSource(dataSource);
@@ -66,18 +57,16 @@ public class HibernateConfig {
         emf.setJpaVendorAdapter(new HibernateJpaVendorAdapter());
 
         Map<String, Object> hibernateProps = new HashMap<>(jpaProperties.getProperties());
-        hibernateProps.put(Environment.MULTI_TENANT, org.hibernate.MultiTenancyStrategy.SCHEMA);
-        hibernateProps.put(Environment.MULTI_TENANT_CONNECTION_PROVIDER, connectionProvider);
-        hibernateProps.put(Environment.MULTI_TENANT_IDENTIFIER_RESOLVER, tenantResolver);
+        // Usar las constantes correctas de AvailableSettings
+        hibernateProps.put("hibernate.multiTenancy", "SCHEMA");
+        hibernateProps.put(AvailableSettings.MULTI_TENANT_CONNECTION_PROVIDER, connectionProvider);
+        hibernateProps.put(AvailableSettings.MULTI_TENANT_IDENTIFIER_RESOLVER, tenantResolver);
         
         emf.setJpaPropertyMap(hibernateProps);
         
         return emf;
     }
 
-    /**
-     * Gestor de transacciones JPA
-     */
     @Bean
     public PlatformTransactionManager transactionManager(EntityManagerFactory emf) {
         JpaTransactionManager transactionManager = new JpaTransactionManager();

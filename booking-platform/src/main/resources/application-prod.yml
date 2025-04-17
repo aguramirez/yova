@@ -1,0 +1,64 @@
+spring:
+  # Configuraciones específicas para producción
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 10
+      
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    clean-disabled: true # Nunca permitir clean en producción
+    
+  # Configuración para recursos en producción
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH0_ISSUER_URI}
+
+# Deshabilitar DevTools en producción
+  devtools:
+    restart:
+      enabled: false
+    livereload:
+      enabled: false
+      
+# Configuración optimizada para producción
+server:
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,application/javascript,application/json
+    min-response-size: 1024
+  http2:
+    enabled: true
+    
+# Configuración de logs más restrictiva en producción
+logging:
+  level:
+    root: WARN
+    com.bookingsaas: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
+    
+# Configuración específica de producción para la aplicación
+app:
+  storage:
+    location: ${APP_STORAGE_LOCATION}
+  cache:
+    timeToLiveSeconds: 3600
+  feature-flags:
+    loyalty-module: true
+    payment-module: true
+    notification-module: true
+    document-module: ${FEATURE_DOCUMENT_MODULE:false}
+    analytics-module: ${FEATURE_ANALYTICS_MODULE:false}
+  auth:
+    allow-mock: false # No permitir autenticación simulada en producción
